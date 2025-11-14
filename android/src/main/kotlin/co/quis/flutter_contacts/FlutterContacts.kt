@@ -28,7 +28,7 @@ import android.provider.ContactsContract.Contacts
 import android.provider.ContactsContract.Data
 import android.provider.ContactsContract.Groups
 import android.provider.ContactsContract.RawContacts
-import android.provider.ContactsContract.RawContacts.DefaultAccount
+import android.provider.DefaultAccountState
 import android.util.Log
 import java.io.FileNotFoundException
 import java.io.InputStream
@@ -74,7 +74,7 @@ class FlutterContacts {
                             .getDefaultAccountForNewContacts(resolver)
 
                         // Only use cloud accounts to avoid the error
-                        if (defaultAccountAndState.state == android.provider.ContactsContract.RawContacts.DefaultAccount.DefaultAccountState.CLOUD) {
+                        if (defaultAccountAndState.state == DefaultAccountState.DEFAULT_ACCOUNT_STATE_CLOUD) {
                             defaultAccountAndState.account?.let { account ->
                                 Log.d("FlutterContacts", "Using system default cloud account: ${account.name} (${account.type})")
                                 return Pair(account.type, account.name)
