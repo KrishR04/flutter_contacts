@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.res.AssetFileDescriptor
 import android.database.Cursor
 import android.net.Uri
+import android.os.Build
 import android.provider.ContactsContract
 import android.provider.ContactsContract.CommonDataKinds.Email
 import android.provider.ContactsContract.CommonDataKinds.Event
@@ -27,6 +28,7 @@ import android.provider.ContactsContract.Contacts
 import android.provider.ContactsContract.Data
 import android.provider.ContactsContract.Groups
 import android.provider.ContactsContract.RawContacts
+import android.util.Log
 import java.io.FileNotFoundException
 import java.io.InputStream
 import java.io.OutputStream
@@ -51,6 +53,89 @@ class FlutterContacts {
         val REQUEST_CODE_EDIT = 77882
         val REQUEST_CODE_PICK = 77883
         val REQUEST_CODE_INSERT = 77884
+
+        // ============================================================
+        // ADD THIS NEW METHOD HERE
+        // ============================================================
+        private fun getValidAccount(resolver: ContentResolver): Pair<String?, String?>? {
+            try {
+                // Try to get context from resolver (works in most cases)
+                val context = runCatching {
+                    val contextField = resolver.javaClass.getDeclaredField("mContext")
+                    contextField.isAccessible = true
+                    contextField.get(resolver) as? Context
+                }.getOrNull()
+
+                // Use Android 8.0+ API if available and context is accessible
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && context != null) {
+                    runCatching {
+                        val defaultAccountAndState = ContactsContract.RawContacts.DefaultAccount
+                            .getDefaultAccountForNewContacts(resolver)
+
+                        // Only use cloud accounts to avoid the error
+                        if (defaultAccountAndState.state == ContactsContract.RawContacts.DefaultAccount.DefaultAccountState.DEFAULT_ACCOUNT_STATE_CLOUD) {
+                            defaultAccountAndState.account?.let { account ->
+                                Log.d("FlutterContacts", "Using system default cloud account: ${account.name} (${account.type})")
+                                return Pair(account.type, account.name)
+                            }
+                        }
+                    }.onFailure { e ->
+                        Log.w("FlutterContacts", "Failed to get system default account: ${e.message}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("FlutterContacts", "Context reflection failed, falling back to query method: ${e.message}")
+            }
+
+            // Fallback: Query existing contacts to find valid accounts
+            val projection = arrayOf(
+                RawContacts.ACCOUNT_TYPE,
+                RawContacts.ACCOUNT_NAME
+            )
+
+            val cursor = resolver.query(
+                RawContacts.CONTENT_URI,
+                projection,
+                null,
+                null,
+                null
+            )
+
+            if (cursor != null) {
+                val validAccounts = mutableSetOf<Pair<String?, String?>>()
+
+                while (cursor.moveToNext()) {
+                    val accountType = cursor.getString(cursor.getColumnIndex(RawContacts.ACCOUNT_TYPE))
+                    val accountName = cursor.getString(cursor.getColumnIndex(RawContacts.ACCOUNT_NAME))
+
+                    // Skip local and SIM accounts
+                    if (accountType != null &&
+                        accountType != "com.android.localphone" &&
+                        accountType != "com.android.sim") {
+                        validAccounts.add(Pair(accountType, accountName))
+                    }
+                }
+
+                cursor.close()
+
+                // Prefer Google accounts
+                val validAccount = validAccounts.firstOrNull { it.first?.contains("google") == true }
+                    ?: validAccounts.firstOrNull()
+
+                if (validAccount != null) {
+                    Log.d("FlutterContacts", "Using account from existing contacts: ${validAccount.second} (${validAccount.first})")
+                    return validAccount
+                }
+            }
+
+            // Final fallback: null account (local storage)
+            Log.d("FlutterContacts", "No cloud account available, using local storage")
+            return Pair(null, null)
+        }
+        // ============================================================
+        // END OF NEW METHOD
+        // ============================================================
+
 
         fun findIdWithLookupKey(
             resolver: ContentResolver,
@@ -450,13 +535,20 @@ class FlutterContacts {
             // option enabled.
             //
             // If an account is provided, use it explicitly instead.
+            Log.d("FlutterContacts", "Inserting contact: ${contact.displayName ?: "Unknown"}")
+
+            // MODIFIED SECTION: Use getValidAccount() to handle cloud account scenarios
             if (contact.accounts.isEmpty()) {
+                val validAccount = getValidAccount(resolver)
+
                 ops.add(
                     ContentProviderOperation.newInsert(RawContacts.CONTENT_URI)
-                        .withValue(RawContacts.ACCOUNT_TYPE, null)
-                        .withValue(RawContacts.ACCOUNT_NAME, null)
+                        .withValue(RawContacts.ACCOUNT_TYPE, validAccount?.first)
+                        .withValue(RawContacts.ACCOUNT_NAME, validAccount?.second)
                         .build()
                 )
+
+                Log.d("FlutterContacts", "Creating contact with account - Type: ${validAccount?.first}, Name: ${validAccount?.second}")
             } else {
                 ops.add(
                     ContentProviderOperation.newInsert(RawContacts.CONTENT_URI)
