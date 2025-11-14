@@ -28,7 +28,6 @@ import android.provider.ContactsContract.Contacts
 import android.provider.ContactsContract.Data
 import android.provider.ContactsContract.Groups
 import android.provider.ContactsContract.RawContacts
-import android.provider.DefaultAccountState
 import android.util.Log
 import java.io.FileNotFoundException
 import java.io.InputStream
