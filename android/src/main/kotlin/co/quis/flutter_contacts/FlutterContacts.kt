@@ -60,73 +60,48 @@ class FlutterContacts {
         // ============================================================
         private fun getValidAccount(resolver: ContentResolver): Pair<String?, String?>? {
             try {
-                // Try to get context from resolver (works in most cases)
-                val context = runCatching {
-                    val contextField = resolver.javaClass.getDeclaredField("mContext")
-                    contextField.isAccessible = true
-                    contextField.get(resolver) as? Context
-                }.getOrNull()
+                // Fallback: Query existing contacts to find valid accounts
+                val projection = arrayOf(
+                    RawContacts.ACCOUNT_TYPE,
+                    RawContacts.ACCOUNT_NAME
+                )
 
-                // Use Android 8.0+ API if available and context is accessible
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && context != null) {
-                    runCatching {
-                        val defaultAccountAndState = DefaultAccount
-                            .getDefaultAccountForNewContacts(resolver)
+                val cursor = resolver.query(
+                    RawContacts.CONTENT_URI,
+                    projection,
+                    null,
+                    null,
+                    null
+                )
 
-                        // Only use cloud accounts to avoid the error
-                        if (defaultAccountAndState.state == DefaultAccountState.DEFAULT_ACCOUNT_STATE_CLOUD) {
-                            defaultAccountAndState.account?.let { account ->
-                                Log.d("FlutterContacts", "Using system default cloud account: ${account.name} (${account.type})")
-                                return Pair(account.type, account.name)
-                            }
+                if (cursor != null) {
+                    val validAccounts = mutableSetOf<Pair<String?, String?>>()
+
+                    while (cursor.moveToNext()) {
+                        val accountType = cursor.getString(cursor.getColumnIndex(RawContacts.ACCOUNT_TYPE))
+                        val accountName = cursor.getString(cursor.getColumnIndex(RawContacts.ACCOUNT_NAME))
+
+                        // Skip local and SIM accounts
+                        if (accountType != null &&
+                            accountType != "com.android.localphone" &&
+                            accountType != "com.android.sim") {
+                            validAccounts.add(Pair(accountType, accountName))
                         }
-                    }.onFailure { e ->
-                        Log.w("FlutterContacts", "Failed to get system default account: ${e.message}")
+                    }
+
+                    cursor.close()
+
+                    // Prefer Google accounts
+                    val validAccount = validAccounts.firstOrNull { it.first?.contains("google") == true }
+                        ?: validAccounts.firstOrNull()
+
+                    if (validAccount != null) {
+                        Log.d("FlutterContacts", "Using account from existing contacts: ${validAccount.second} (${validAccount.first})")
+                        return validAccount
                     }
                 }
             } catch (e: Exception) {
-                Log.w("FlutterContacts", "Context reflection failed, falling back to query method: ${e.message}")
-            }
-
-            // Fallback: Query existing contacts to find valid accounts
-            val projection = arrayOf(
-                RawContacts.ACCOUNT_TYPE,
-                RawContacts.ACCOUNT_NAME
-            )
-
-            val cursor = resolver.query(
-                RawContacts.CONTENT_URI,
-                projection,
-                null,
-                null,
-                null
-            )
-
-            if (cursor != null) {
-                val validAccounts = mutableSetOf<Pair<String?, String?>>()
-
-                while (cursor.moveToNext()) {
-                    val accountType = cursor.getString(cursor.getColumnIndex(RawContacts.ACCOUNT_TYPE))
-                    val accountName = cursor.getString(cursor.getColumnIndex(RawContacts.ACCOUNT_NAME))
-
-                    // Skip local and SIM accounts
-                    if (accountType != null &&
-                        accountType != "com.android.localphone" &&
-                        accountType != "com.android.sim") {
-                        validAccounts.add(Pair(accountType, accountName))
-                    }
-                }
-
-                cursor.close()
-
-                // Prefer Google accounts
-                val validAccount = validAccounts.firstOrNull { it.first?.contains("google") == true }
-                    ?: validAccounts.firstOrNull()
-
-                if (validAccount != null) {
-                    Log.d("FlutterContacts", "Using account from existing contacts: ${validAccount.second} (${validAccount.first})")
-                    return validAccount
-                }
+                Log.w("FlutterContacts", "Failed to query accounts: ${e.message}")
             }
 
             // Final fallback: null account (local storage)
